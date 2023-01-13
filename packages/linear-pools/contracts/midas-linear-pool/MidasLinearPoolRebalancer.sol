@@ -21,7 +21,7 @@ import "@balancer-labs/v2-solidity-utils/contracts/math/Math.sol";
 import "@balancer-labs/v2-solidity-utils/contracts/openzeppelin/ERC20.sol";
 import "@balancer-labs/v2-solidity-utils/contracts/openzeppelin/SafeERC20.sol";
 
-import "@balancer-labs/v2-pool-linear/contracts/LinearPoolRebalancer.sol";
+import "./contracts/LinearPoolRebalancer.sol";
 
 contract MidasLinearPoolRebalancer is LinearPoolRebalancer {
     using Math for uint256;
