@@ -330,9 +330,9 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
       );
 
       await setCode(cBRZ, getExternalPackageArtifact('linear-pools/MockCToken').deployedBytecode);
-      const mockMaliciousEulerToken = await getExternalPackageDeployedAt('linear-pools/MockCToken', cBRZ);
+      const mockMaliciousMidasToken = await getExternalPackageDeployedAt('linear-pools/MockCToken', cBRZ);
 
-      await mockMaliciousEulerToken.setRevertType(2); // Type 2 is malicious swap query revert
+      await mockMaliciousMidasToken.setRevertType(2); // Type 2 is malicious swap query revert
       await expect(rebalancer.rebalance(other.address)).to.be.revertedWith('BAL#357'); // MALICIOUS_QUERY_REVERT
     });
   });
