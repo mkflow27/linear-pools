@@ -5,13 +5,12 @@ import { setCode } from '@nomicfoundation/hardhat-network-helpers';
 import * as expectEvent from '@orbcollective/shared-dependencies/expectEvent';
 
 import { bn, fp, FP_ONE } from '@orbcollective/shared-dependencies/numbers';
-import { 
+import {
   MAX_UINT256,
   getExternalPackageDeployedAt,
   getExternalPackageArtifact,
 } from '@orbcollective/shared-dependencies';
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/dist/src/signer-with-address';
-
 
 import { SwapKind } from '@balancer-labs/balancer-js';
 
@@ -28,7 +27,7 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
   const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
   const cWBNB = '0x38982105A2F81dc5dBDEA6c131bB4bF5a416513A';
 
-  const WBNB_SCALING = bn(1e0); // BRZ has 18 decimals, so its scaling factor is 1e0
+  const WBNB_SCALING = bn(1); // BRZ has 18 decimals, so its scaling factor is 1e0
 
   const WBNB_HOLDER = '0x58f876857a02d6762e0101bb5c46a8c1ed44dc16';
 
@@ -42,7 +41,6 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
   const FINAL_UPPER_TARGET = fp(5e4);
 
   const PROTOCOL_ID = 0;
-
 
   let pool: Contract;
   let poolId: string;
@@ -97,7 +95,7 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
       }
 
       const initialRecipientMainBalance = await brz.balanceOf(other.address);
-      
+
       if (expectedState != LinearPoolState.BALANCED) {
         await rebalancer.connect(holder).rebalance(other.address);
       } else {
@@ -136,8 +134,8 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
         INITIAL_UPPER_TARGET,
         SWAP_FEE_PERCENTAGE,
         owner.address,
-        PROTOCOL_ID,
-        );
+        PROTOCOL_ID
+      );
       const event = expectEvent.inReceipt(await tx.wait(), 'PoolCreated');
 
       pool = await task.instanceAt('MidasLinearPool', event.args.pool);
@@ -307,5 +305,35 @@ describeForkTest('MidasLinearPoolFactory', 'bsc', 23696722, function () {
   describe('rebalance repeatedly', () => {
     itRebalancesThePool(LinearPoolState.BALANCED);
     itRebalancesThePool(LinearPoolState.BALANCED);
+  });
+
+  describe('rebalancer query protection', () => {
+    it('reverts with a malicious lending pool', async () => {
+      const { cash } = await vault.getPoolTokenInfo(poolId, WBNB);
+      const scaledCash = cash.mul(WBNB_SCALING);
+      const { lowerTarget } = await pool.getTargets();
+
+      const exitAmount = scaledCash.sub(lowerTarget.div(3)).div(WBNB_SCALING);
+
+      await vault.connect(holder).swap(
+        {
+          kind: SwapKind.GivenOut,
+          poolId,
+          assetIn: pool.address,
+          assetOut: WBNB,
+          amount: exitAmount,
+          userData: '0x',
+        },
+        { sender: holder.address, recipient: holder.address, fromInternalBalance: false, toInternalBalance: false },
+        MAX_UINT256,
+        MAX_UINT256
+      );
+
+      await setCode(cWBNB, getExternalPackageArtifact('linear-pools/MockCToken').deployedBytecode);
+      const mockMaliciousMidasToken = await getExternalPackageDeployedAt('linear-pools/MockCToken', cWBNB);
+
+      await mockMaliciousMidasToken.setRevertType(2); // Type 2 is malicious swap query revert
+      await expect(rebalancer.rebalance(other.address)).to.be.revertedWith('BAL#357'); // MALICIOUS_QUERY_REVERT
+    });
   });
 });
