@@ -2,26 +2,79 @@ import { ethers } from 'hardhat';
 import { expect } from 'chai';
 import { BigNumber, Contract } from 'ethers';
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/dist/src/signer-with-address';
-import { bn, fp } from '@balancer-labs/v2-helpers/src/numbers';
-import { sharedBeforeEach } from '@balancer-labs/v2-common/sharedBeforeEach';
-import * as expectEvent from '@balancer-labs/v2-helpers/src/test/expectEvent';
-import Token from '@balancer-labs/v2-helpers/src/models/tokens/Token';
-import LinearPool from '@balancer-labs/v2-helpers/src/models/pools/linear/LinearPool';
-import { deploy } from '@balancer-labs/v2-helpers/src/contract';
-import Vault from '@balancer-labs/v2-helpers/src/models/vault/Vault';
-import { MAX_UINT256 } from '@balancer-labs/v2-helpers/src/constants';
-import { FundManagement, SingleSwap } from '@balancer-labs/balancer-js/src';
+
+import { bn, fp } from '@orbcollective/shared-dependencies/numbers';
+import {
+  deployPackageContract,
+  getPackageContractDeployedAt,
+  deployToken,
+  setupEnvironment,
+  getBalancerContractArtifact,
+  MAX_UINT256,
+  ZERO_ADDRESS,
+} from '@orbcollective/shared-dependencies';
+
+import { MONTH } from '@orbcollective/shared-dependencies/time';
+
+import * as expectEvent from '@orbcollective/shared-dependencies/expectEvent';
+import TokenList from '@orbcollective/shared-dependencies/test-helpers/token/TokenList';
+
+import { FundManagement, SingleSwap } from '@balancer-labs/balancer-js';
+import { initial } from 'lodash';
+
+
+
+export enum SwapKind {
+  GivenIn = 0,
+  GivenOut,
+}
+
+enum RevertType {
+  DoNotRevert,
+  NonMalicious,
+  MaliciousSwapQuery,
+  MaliciousJoinExitQuery,
+}
+
+async function deployBalancerContract(
+  task: string,
+  contractName: string,
+  deployer: SignerWithAddress,
+  args: unknown[]
+): Promise<Contract> {
+  const artifact = await getBalancerContractArtifact(task, contractName);
+  const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, deployer);
+  const contract = await factory.deploy(...args);
+
+  return contract;
+}
 
 describe('MidasLinearPool', function () {
+  let pool: Contract;
+  let vault: Contract;
+  let tokens: TokenList;
+  let mainToken: Contract, wrappedToken: Contract, wrappedTokenInstance: Contract;
   let poolFactory: Contract;
-  let lp: SignerWithAddress, owner: SignerWithAddress;
-  let vault: Vault;
+  let guardian: SignerWithAddress, lp: SignerWithAddress, owner: SignerWithAddress;
+  let manager: SignerWithAddress;
   let funds: FundManagement;
 
   const POOL_SWAP_FEE_PERCENTAGE = fp(0.01);
+  const MIDAS_PROTOCOL_ID = 0;
+
+
+  const BASE_PAUSE_WINDOW_DURATION = MONTH * 3;
+  const BASE_BUFFER_PERIOD_DURATION = MONTH;
 
   before('setup', async () => {
+    let deployer: SignerWithAddress;
+    let trader: SignerWithAddress;
+
+    // appease the @typescript-eslint/no-unused-vars lint error
     [, lp, owner] = await ethers.getSigners();
+    ({ vault, deployer, trader } = await setupEnvironment());
+    manager = deployer;
+    guardian = trader;
 
     funds = {
       sender: lp.address,
@@ -29,175 +82,395 @@ describe('MidasLinearPool', function () {
       toInternalBalance: false,
       recipient: lp.address,
     };
+
+    // Deploy tokens
+    mainToken = await deployToken('USDC', 18, deployer);
+    wrappedTokenInstance = await deployPackageContract('MockCToken', {
+      args: ['cDAI,', 'cDAI', 18, mainToken.address, fp(1.05)],
+    });
+
+    // returns a Contract type.
+    // internally loads a contracts artifact (abi and bytecode of a TestToken contract)
+    // afterwards the hardhat-ethers plugin is used to
+    // ethers.getContractAt() to allow interaction with the contract
+    wrappedToken = await getPackageContractDeployedAt('TestToken', wrappedTokenInstance.address);
+
+    tokens = new TokenList([mainToken, wrappedToken]).sort();
+
+    await tokens.mint({ to: [lp, trader], amount: fp(100) });
+
+    // Deploy Balancer Queries
+    const queriesTask = '20220721-balancer-queries';
+    const queriesContract = 'BalancerQueries';
+    const queriesArgs = [vault.address];
+    const queries = await deployBalancerContract(queriesTask, queriesContract, manager, queriesArgs);
+
+    // Deploy poolFactory
+    poolFactory = await deployPackageContract('MidasLinearPoolFactory', {
+      args: [
+        vault.address,
+        ZERO_ADDRESS,
+        queries.address,
+        'factoryVersion',
+        'poolVersion',
+        BASE_PAUSE_WINDOW_DURATION,
+        BASE_BUFFER_PERIOD_DURATION
+      ],
+    });
+
+
+    // Deploy and initialize pool
+    const tx = await poolFactory.create(
+      'Balancer Pool Token',
+      'BPT',
+      mainToken.address,
+      wrappedToken.address,
+      bn(0),
+      POOL_SWAP_FEE_PERCENTAGE,
+      owner.address,
+      MIDAS_PROTOCOL_ID
+    );
+    const receipt = await tx.wait();
+    const event = expectEvent.inReceipt(receipt, 'PoolCreated');
+
+    pool = await getPackageContractDeployedAt('LinearPool', event.args.pool);
   });
 
-  sharedBeforeEach('deploy vault & pool factory', async () => {
-    vault = await Vault.create();
-    const queries = await deploy('v2-standalone-utils/BalancerQueries', { args: [vault.address] });
-    poolFactory = await deploy('MidasLinearPoolFactory', {
-      args: [vault.address, vault.getFeesProvider().address, queries.address, '1.0', '1.0'],
+  describe('constructor', () => {
+    it('reverts if the mainToken is not the ASSET of the wrappedToken',async () => {
+      const otherToken = await deployToken('USDC', 18, manager);
+
+      await expect(
+        poolFactory.create(
+          'Balancer Pool Token',
+          'BPT',
+          otherToken.address,
+          wrappedToken.address,
+          bn(0),
+          POOL_SWAP_FEE_PERCENTAGE,
+          owner.address,
+          MIDAS_PROTOCOL_ID
+        )
+      ).to.be.revertedWith('BAL#520')
     });
   });
 
-  async function deployPool(mainTokenAddress: string, wrappedTokenAddress: string) {
+  describe('asset managers', () => {
+    it('sets the same asset manager for main and wrapped token', async () => {
+      const poolId = await pool.getPoolId();
+
+      const { assetManager: firstAssetManager } = await vault.getPoolTokenInfo(poolId, tokens.first.address);
+      const { assetManager: secondAssetManager} = await vault.getPoolTokenInfo(poolId, tokens.second.address);
+
+      expect(firstAssetManager).to.not.equal(ZERO_ADDRESS);
+      expect(secondAssetManager).to.equal(firstAssetManager);
+    });
+
+    it('sets the no asset manager for the BPT', async () => {
+      const poolId = await pool.getPoolId();
+      const { assetManager } = await vault.getPoolTokenInfo(poolId, pool.address);
+      expect(assetManager).to.equal(ZERO_ADDRESS);      
+    });
+  });
+
+  describe('getWrappedTokenRate', () => {
+    context('under normal operation', () => {
+      it('returns the expected value', async () => {
+        expect(await pool.getWrappedTokenRate()).to.be.eq(fp(1.05));
+
+        // change exchangeRate at the mockCToken
+        await wrappedTokenInstance.setExchangeRate(bn(2e18))
+        expect(await pool.getWrappedTokenRate()).to.be.eq(bn(2e18));
+
+        // change exchangeRate at the mockCToken
+        await wrappedTokenInstance.setExchangeRate(bn(1e18))
+        expect(await pool.getWrappedTokenRate()).to.be.eq(bn(1e18));
+      })
+    });
+
+    context('when Midas reverts maliciously to impersonate a swap query', () => {
+      it('reverts with MALICIOUS_QUERY_REVERT', async () => {
+        await wrappedTokenInstance.setRevertType(RevertType.MaliciousSwapQuery);
+        await expect(pool.getWrappedTokenRate()).to.be.revertedWith('BAL#357');
+      });
+    })
+
+    context('when Midas reverts maliciously to impersonate a join/exit query', () => {
+      it('reverts with MALICIOUS_QUERY_REVERT', async () => {
+        await wrappedTokenInstance.setRevertType(RevertType.MaliciousJoinExitQuery);
+        await expect(pool.getWrappedTokenRate()).to.be.revertedWith('BAL#357');
+      });
+    });
+  });
+
+  describe('rebalancing', () => {
+    context('when Midas reverts maliciously to impersonate a swap query', () => {
+      let rebalancer: Contract;
+      beforeEach('provide initial liquidity to pool', async () => {
+        await wrappedTokenInstance.setRevertType(RevertType.DoNotRevert);
+        const poolId = await pool.getPoolId();
+        await tokens.approve({ to: vault, amount: fp(100), from: lp });
+        await vault.connect(lp).swap(
+          {
+            poolId,
+            kind: SwapKind.GivenIn,
+            assetIn: mainToken.address,
+            assetOut: pool.address,
+            amount: fp(10),
+            userData: '0x',
+          },
+          { sender: lp.address, fromInternalBalance: false, recipient: lp.address, toInternalBalance: false },
+          0,
+          MAX_UINT256
+        );
+      });
+
+      beforeEach('deploy and initialize pool', async () => {
+        const poolId = await pool.getPoolId();
+        const { assetManager } = await vault.getPoolTokenInfo(poolId, tokens.first.address);
+        rebalancer = await getPackageContractDeployedAt('MidasLinearPoolRebalancer', assetManager);
+      });
+
+      beforeEach('make Midas lending pool start reverting', async () => {
+        await wrappedTokenInstance.setRevertType(RevertType.MaliciousSwapQuery);
+      });
+
+      it('reverts with MALICIOUS_QUERY_REVERT', async () => {
+        await expect(rebalancer.rebalance(guardian.address)).to.be.revertedWith('BAL#357'); // MALICIOUS_QUERY_REVERT
+      });
+    });
+  });
+
+// Midas custom tests
+describe('usdc vault with 6 decimals tests', () => {
+  let deployer: SignerWithAddress;
+
+  // this describe statement has a pool deployment before each it
+  // mimic it to achieve same test behavour as with balacer labs
+
+  // Token type not part of this repo
+  // let usdc: Token;
+  let usdc: Contract;
+  // let cUSDC: Token;
+  let cusdc: Contract;
+
+
+  let usdcCtoken: Contract;
+  // LinearPool type not part of this repo. Make it a Contract type
+  // let bbcUSDC: LinearPool;
+  let bbcusdc: Contract;
+
+  let initialExchangeRate: BigNumber;
+  let usdcRequired: BigNumber;
+
+  beforeEach('setup tokens, cToken and linear pool', async () => {
+  // deploy tokens before each it statement
+  // due to decimals being relevant for the first describe statement
+
+    // deploy Token returns a contract instance which is interactable
+    // via ethers.ContractFactory
+    // it already has a proper ERC20Token factory included and
+    // this no specification is needed
+
+    // seperate token as it now has 6 decimals
+    usdc = await deployToken('USDC', 6, deployer);
+
+    // deployPackageContract returns a contract instance which is
+    // interactable. It does this by loading the artifact, creating the
+    // ethers ContractFactory and deploying the instance from that factory
+    cusdc = await deployPackageContract('MockCToken', {
+      args: ['cUSDC', 'cUSDC', 6, usdc.address, fp(1)],
+    });
+
     const tx = await poolFactory.create(
-      'Linear pool',
+      'usdc cusdc Linear Pool',
       'BPT',
-      mainTokenAddress,
-      wrappedTokenAddress,
+      usdc.address,
+      cusdc.address,
       fp(1_000_000),
       POOL_SWAP_FEE_PERCENTAGE,
-      owner.address
+      owner.address,
+      MIDAS_PROTOCOL_ID
     );
+    const receipt = await tx.wait();
+    const event = expectEvent.inReceipt(receipt, 'PoolCreated');
+
+    bbcusdc = await getPackageContractDeployedAt('LinearPool', event.args.pool);
+
+    const initialJoinAmount = bn(100000000000);
+    await usdc.mint(lp.address, initialJoinAmount);
+
+    // make sure lp is attached to usdc.
+    // let's test
+    await usdc.connect(lp).approve(vault.address, initialJoinAmount);
+
+    const joinData: SingleSwap = {
+      poolId: await bbcusdc.getPoolId(),
+      kind: 0,
+      assetIn: usdc.address,
+      assetOut: bbcusdc.address,
+      amount: BigNumber.from(100_000e6),
+      userData: '0x',
+    };
+
+    const transaction = await vault.connect(lp).swap(joinData, funds, BigNumber.from(0), MAX_UINT256);
+    await transaction.wait();
+  });
+
+  it('should return wrapped token rate scaled to 18 decimals for a 6 decimal token', async () => {
+    console.log("test");
+    await cusdc.setExchangeRate(fp(1.5));
+    expect(await bbcusdc.getWrappedTokenRate()).to.be.eq(fp(1.5));
+  });
+
+  it('should swap 0.800_000 cUSDC to 1 USDC when the exchangeRate is 1.25e18', async () => {
+    initialExchangeRate = fp(1.25);
+    const cUsdcAmount = bn(8e5);
+    await cusdc.setExchangeRate(initialExchangeRate);
+    expect(await bbcusdc.getWrappedTokenRate()).to.be.eq(fp(1.25));
+
+
+    usdcRequired = (cUsdcAmount.mul(initialExchangeRate).div((BigNumber.from(10).pow(18))));
+    await usdc.connect(lp).mint(lp.address, usdcRequired);
+    await usdc.connect(lp).approve(cusdc.address, usdcRequired);
+
+    await cusdc.connect(lp).mintCTokens(usdcRequired);
+    await cusdc.connect(lp).approve(vault.address, MAX_UINT256);
+
+    const rebalanceSwapData: SingleSwap = {
+      poolId: await bbcusdc.getPoolId(),
+      kind: 0,
+      assetIn: cusdc.address,
+      assetOut: usdc.address,
+      amount: cUsdcAmount,
+      userData: '0x',
+    };
+
+    const balanceBefore = await usdc.balanceOf(lp.address);
+    await vault.connect(lp).swap(rebalanceSwapData, funds, BigNumber.from(0), MAX_UINT256);
+    const balanceAfter = await usdc.balanceOf(lp.address);
+    const amountReturned = balanceAfter.sub(balanceBefore);
+
+    expect(amountReturned).to.be.eq(bn(1e6));
+  });
+
+  it('should swap 800 cUSDC to 1,000 USDC when the ppfs is 1.25e18', async () => {
+    initialExchangeRate = fp(1.25);
+    // we try to rebalance it with some wrapped tokens
+    const cUsdcAmount = bn(8e8);
+    await cusdc.setExchangeRate(initialExchangeRate);
+
+    expect(await bbcusdc.getWrappedTokenRate()).to.be.eq(initialExchangeRate);
+
+    usdcRequired = (cUsdcAmount.mul(initialExchangeRate).div((BigNumber.from(10).pow(18))));
+
+    await usdc.connect(lp).mint(lp.address, usdcRequired);
+    await usdc.connect(lp).approve(cusdc.address, usdcRequired);
+
+    await cusdc.connect(lp).mintCTokens(usdcRequired);
+    await cusdc.connect(lp).approve(vault.address, MAX_UINT256);
+
+    const rebalanceSwapData: SingleSwap = {
+      poolId: await bbcusdc.getPoolId(),
+      kind: 0,
+      assetIn: cusdc.address,
+      assetOut: usdc.address,
+      amount: cUsdcAmount,
+      userData: '0x',
+    };
+
+    const balanceBefore = await usdc.balanceOf(lp.address);
+
+    await vault.connect(lp).swap(rebalanceSwapData, funds, BigNumber.from(0), MAX_UINT256);
+    const balanceAfter = await usdc.balanceOf(lp.address);
+    const amountReturned = balanceAfter.sub(balanceBefore);
+    expect(amountReturned).to.be.eq(1e9);
+  });
+});
+
+describe('DAI with 18 decimals tests', () => {
+  let deployer: SignerWithAddress;
+
+  let dai: Contract;
+  let cdai: Contract;
+  let bbcdai: Contract;
+
+  let initialExchangeRate: BigNumber;
+  let daiRequired: BigNumber;
+
+  beforeEach('setup tokens, cToken and linear pool', async () => {
+    dai = await deployToken('DAI', 18, deployer);
+    cdai  = await deployPackageContract('MockCToken', {
+      args: ['cdai', 'cdai', 18, dai.address, fp(1)],
+    });
+
+    const tx = await poolFactory.create(
+      'dai cdai Linear Pool',
+      'BPT',
+      dai.address,
+      cdai.address,
+      fp(1_000_000),
+      POOL_SWAP_FEE_PERCENTAGE,
+      owner.address,
+      MIDAS_PROTOCOL_ID
+    )
 
     const receipt = await tx.wait();
     const event = expectEvent.inReceipt(receipt, 'PoolCreated');
 
-    return LinearPool.deployedAt(event.args.pool);
-  }
+    bbcdai = await getPackageContractDeployedAt('LinearPool', event.args.pool);
+    const initialJoinAmount = fp(100);
+    await dai.mint(lp.address, initialJoinAmount);
+    await dai.connect(lp).approve(vault.address, initialJoinAmount);
 
-  describe('usdc vault with 6 decimals tests', () => {
-    let usdc: Token;
-    let cUSDC: Token;
-    let usdcCtoken: Contract;
-    let bbcUSDC: LinearPool;
 
-    sharedBeforeEach('setup tokens, cToken and linear pool', async () => {
-      usdc = await Token.create({ symbol: 'USDC', name: 'USDC', decimals: 6 });
-      usdcCtoken = await deploy('MockCToken', {
-        args: ['cUSDC', 'cUSDC', 6, usdc.address, fp(1)],
-      });
-      cUSDC = await Token.deployedAt(usdcCtoken.address);
+    const joinData: SingleSwap = {
+      poolId: await bbcdai.getPoolId(),
+      kind: 0,
+      assetIn: dai.address,
+      assetOut: bbcdai.address,
+      amount: initialJoinAmount,
+      userData: '0x',
+    };
 
-      bbcUSDC = await deployPool(usdc.address, cUSDC.address);
-      const initialJoinAmount = bn(100000000000);
-      await usdc.mint(lp, initialJoinAmount);
-      await usdc.approve(vault.address, initialJoinAmount, { from: lp });
-
-      const joinData: SingleSwap = {
-        poolId: bbcUSDC.poolId,
-        kind: 0,
-        assetIn: usdc.address,
-        assetOut: bbcUSDC.address,
-        amount: BigNumber.from(100_000e6),
-        userData: '0x',
-      };
-
-      const transaction = await vault.instance.connect(lp).swap(joinData, funds, BigNumber.from(0), MAX_UINT256);
-      await transaction.wait();
-    });
-
-    it('should return wrapped token rate scaled to 18 decimals for a 6 decimal token', async () => {
-      await usdcCtoken.setExchangeRate(fp(1.5));
-      expect(await bbcUSDC.getWrappedTokenRate()).to.be.eq(fp(1.5));
-    });
-
-    it('should swap 0.800_000 cUSDC to 1 USDC when the exchangeRate is 1.25e18', async () => {
-      await usdcCtoken.setExchangeRate(fp(1.25));
-      // we try to rebalance it with some wrapped tokens
-      const cUsdcAmount = bn(8e5);
-      await cUSDC.mint(lp, cUsdcAmount);
-      await cUSDC.approve(vault.address, cUsdcAmount, { from: lp });
-
-      const rebalanceSwapData: SingleSwap = {
-        poolId: bbcUSDC.poolId,
-        kind: 0,
-        assetIn: cUSDC.address,
-        assetOut: usdc.address,
-        amount: cUsdcAmount,
-        userData: '0x',
-      };
-
-      const balanceBefore = await usdc.balanceOf(lp.address);
-      await vault.instance.connect(lp).swap(rebalanceSwapData, funds, BigNumber.from(0), MAX_UINT256);
-      const balanceAfter = await usdc.balanceOf(lp.address);
-      const amountReturned = balanceAfter.sub(balanceBefore);
-
-      expect(amountReturned).to.be.eq(bn(1e6));
-    });
-
-    it('should swap 800 cUSDC to 1,000 USDC when the ppfs is 1.25e18', async () => {
-      await usdcCtoken.setExchangeRate(fp(1.25));
-      // we try to rebalance it with some wrapped tokens
-      const cUsdcAmount = bn(8e8);
-      await cUSDC.mint(lp, cUsdcAmount);
-      await cUSDC.approve(vault.address, cUsdcAmount, { from: lp });
-
-      const rebalanceSwapData: SingleSwap = {
-        poolId: bbcUSDC.poolId,
-        kind: 0,
-        assetIn: cUSDC.address,
-        assetOut: usdc.address,
-        amount: cUsdcAmount,
-        userData: '0x',
-      };
-
-      const balanceBefore = await usdc.balanceOf(lp.address);
-
-      await vault.instance.connect(lp).swap(rebalanceSwapData, funds, BigNumber.from(0), MAX_UINT256);
-      const balanceAfter = await usdc.balanceOf(lp.address);
-      const amountReturned = balanceAfter.sub(balanceBefore);
-      expect(amountReturned).to.be.eq(1e9);
-    });
+    const transaction = await vault.connect(lp).swap(joinData, funds, BigNumber.from(0), MAX_UINT256);
+    await transaction.wait();
   });
 
-  describe('DAI with 18 decimals tests', () => {
-    let dai: Token;
-    let cDAI: Token;
-    let daiCToken: Contract;
-    let bbcDAI: LinearPool;
-
-    sharedBeforeEach('setup tokens, cToken and linear pool', async () => {
-      dai = await Token.create({ symbol: 'DAI', name: 'DAI', decimals: 18 });
-      daiCToken = await deploy('MockCToken', {
-        args: ['cDAI', 'cDAI', 18, dai.address, fp(1)],
-      });
-      cDAI = await Token.deployedAt(daiCToken.address);
-
-      bbcDAI = await deployPool(dai.address, cDAI.address);
-      const initialJoinAmount = fp(100);
-      await dai.mint(lp, initialJoinAmount);
-      await dai.approve(vault.address, initialJoinAmount, { from: lp });
-
-      const joinData: SingleSwap = {
-        poolId: bbcDAI.poolId,
-        kind: 0,
-        assetIn: dai.address,
-        assetOut: bbcDAI.address,
-        amount: initialJoinAmount,
-        userData: '0x',
-      };
-
-      const transaction = await vault.instance.connect(lp).swap(joinData, funds, BigNumber.from(0), MAX_UINT256);
-      await transaction.wait();
-    });
-
-    it('should return unscaled wrapped token rate for an 18 decimal token', async () => {
-      await daiCToken.setExchangeRate(fp(1.5));
-      expect(await bbcDAI.getWrappedTokenRate()).to.be.eq(fp(1.5));
-    });
-
-    it('should swap 1 cDAI to 2 DAI when the pricePerFullShare is 2e18', async () => {
-      await daiCToken.setExchangeRate(fp(2));
-
-      const cDAIAmount = fp(1);
-      await cDAI.mint(lp, cDAIAmount);
-      await cDAI.approve(vault.address, cDAIAmount, { from: lp });
-
-      const data: SingleSwap = {
-        poolId: bbcDAI.poolId,
-        kind: 0,
-        assetIn: cDAI.address,
-        assetOut: dai.address,
-        amount: cDAIAmount,
-        userData: '0x',
-      };
-
-      const balanceBefore = await dai.balanceOf(lp.address);
-      await vault.instance.connect(lp).swap(data, funds, BigNumber.from(0), MAX_UINT256);
-      const balanceAfter = await dai.balanceOf(lp.address);
-      const amountReturned = balanceAfter.sub(balanceBefore);
-      expect(amountReturned).to.be.eq(fp(2));
-    });
+  it('should return unscaled wrapped token rate for an 18 decimal token', async () => {
+    await cdai.setExchangeRate(fp(1.5));
+    expect(await bbcdai.getWrappedTokenRate()).to.be.eq(fp(1.5));
   });
+
+  it('should swap 1 cDAI to 2 DAI when the pricePerFullShare is 2e18', async () => {
+    initialExchangeRate = fp(2);
+    await cdai.setExchangeRate(initialExchangeRate);
+    expect(await bbcdai.getWrappedTokenRate()).to.be.eq(fp(2));
+
+    const cDAIAmount = fp(1);
+    daiRequired = (cDAIAmount.mul(initialExchangeRate).div((BigNumber.from(10).pow(18))));
+    await dai.connect(lp).mint(lp.address, daiRequired);
+    await dai.connect(lp).approve(cdai.address, daiRequired);
+    
+    await cdai.connect(lp).mintCTokens(daiRequired);
+    await cdai.connect(lp).approve(vault.address, MAX_UINT256);
+
+    expect(await cdai.balanceOf(lp.address)).to.be.eq(cDAIAmount);
+
+    const data: SingleSwap = {
+      poolId: await bbcdai.getPoolId(),
+      kind: 0,
+      assetIn: cdai.address,
+      assetOut: dai.address,
+      amount: cDAIAmount,
+      userData: '0x',
+    };
+
+    const balanceBefore = await dai.balanceOf(lp.address);
+    await vault.connect(lp).swap(data, funds, BigNumber.from(0), MAX_UINT256);
+    const balanceAfter = await dai.balanceOf(lp.address);
+    const amountReturned = balanceAfter.sub(balanceBefore);
+    expect(amountReturned).to.be.eq(fp(2));
+  });
+});
 });

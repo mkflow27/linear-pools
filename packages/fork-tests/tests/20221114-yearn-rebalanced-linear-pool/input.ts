@@ -21,8 +21,8 @@ const BaseVersion = { version: 1, deployment: '20221114-yearn-rebalanced-linear-
 
 export default {
   Vault,
-  BalancerQueries,
   ProtocolFeePercentagesProvider,
+  BalancerQueries,
   WETH,
   FactoryVersion: JSON.stringify({ name: 'YearnLinearPoolFactory', ...BaseVersion }),
   PoolVersion: JSON.stringify({ name: 'YearnLinearPool', ...BaseVersion }),

@@ -17,8 +17,10 @@ pragma solidity ^0.7.0;
 import "@orbcollective/shared-dependencies/contracts/TestToken.sol";
 import "../interfaces/ICToken.sol";
 
-contract MockCToken is TestToken, ICToken {
-    address public override immutable underlying;
+import "@orbcollective/shared-dependencies/contracts/MockMaliciousQueryReverter.sol";
+
+contract MockCToken is TestToken, ICToken, MockMaliciousQueryReverter {
+    address public immutable override underlying;
     uint256 private _exchangeRate;
     uint256 private _temp;
 
@@ -32,7 +34,7 @@ contract MockCToken is TestToken, ICToken {
         underlying = underlyingAsset;
         _exchangeRate = exchangeRate;
     }
-   
+
     /**
      * @notice Sender supplies assets into the market and receives cTokens in exchange
      * @dev Accrues interest whether or not the operation succeeds, unless reverted
@@ -40,7 +42,7 @@ contract MockCToken is TestToken, ICToken {
      * @return uint 0=success, otherwise a failure (see ErrorReporter.sol for details)
      */
     function mint(uint256 mintAmount) public override returns (uint256) {
-        uint256 amountToMint = mintAmount * 10**18 / _exchangeRate;
+        uint256 amountToMint = (mintAmount * 10**18) / _exchangeRate;
 
         ERC20(underlying).transferFrom(msg.sender, address(this), mintAmount);
 
@@ -62,18 +64,20 @@ contract MockCToken is TestToken, ICToken {
     function redeem(uint256 redeemTokens) external override returns (uint256) {
         _burn(msg.sender, redeemTokens);
 
-        uint256 amountToReturn = redeemTokens * _exchangeRate / 10**18;
+        uint256 amountToReturn = (redeemTokens * _exchangeRate) / 10**18;
 
         ERC20(underlying).transfer(msg.sender, amountToReturn);
 
         return 0;
     }
 
-    function exchangeRateCurrent() external override view returns (uint256) {
+    function exchangeRateCurrent() external view override returns (uint256) {
+        maybeRevertMaliciously();
         return _exchangeRate;
     }
 
-    function exchangeRateStored() external override view returns (uint256) {
+    function exchangeRateStored() external view override returns (uint256) {
+        maybeRevertMaliciously();
         return _exchangeRate;
     }
 
@@ -83,7 +87,7 @@ contract MockCToken is TestToken, ICToken {
 
     function accrueInterest() external override returns (uint256) {
         _temp = 1;
-        
+
         return 0;
     }
 }
