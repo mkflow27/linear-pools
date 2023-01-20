@@ -46,7 +46,7 @@ contract MidasLinearPoolRebalancer is LinearPoolRebalancer {
         _divisor = 10**(18 + wrappedToken.decimals() - mainToken.decimals());
     }
 
-    function _wrapTokens(uint256 amount) internal override { 
+    function _wrapTokens(uint256 amount) internal override {
         // Depositing from underlying (i.e. DAI, USDC, etc. instead of cDAI or cUSDC). Before we can
         // deposit however, we need to approve the wrapper (cToken) in the underlying token.
         _mainToken.safeApprove(address(_wrappedToken), amount);

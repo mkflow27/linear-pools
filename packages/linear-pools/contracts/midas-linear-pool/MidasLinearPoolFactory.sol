@@ -78,7 +78,7 @@ contract MidasLinearPoolFactory is
             bufferPeriodDuration,
             type(MidasLinearPool).creationCode
         )
-        Version(factoryVersion) 
+        Version(factoryVersion)
     {
         _queries = queries;
         _poolVersion = poolVersion;
@@ -104,7 +104,7 @@ contract MidasLinearPoolFactory is
         require(protocolIdData.registered, "Protocol ID not registered");
 
         return protocolIdData.name;
-    } 
+    }
 
     function _create(bytes memory constructorArgs) internal virtual override returns (address) {
         address pool = super._create(constructorArgs);
@@ -181,5 +181,21 @@ contract MidasLinearPoolFactory is
 
         // We don't return the Rebalancer's address, but that can be queried in the Vault by calling `getPoolTokenInfo`.
         return pool;
+    }
+
+    /**
+     * @notice Register an id (and name) to differentiate between multiple protocols using this factory.
+     * @dev This is a permissioned function. Protocol ids cannot be deregistered.
+     */
+    function registerProtocolId(uint256 protocolId, string memory name) external authenticate {
+        require(!_protocolIds[protocolId].registered, "Protocol ID already registered");
+
+        _registerProtocolId(protocolId, name);
+    }
+
+    function _registerProtocolId(uint256 protocolId, string memory name) private {
+        _protocolIds[protocolId] = ProtocolIdData({ name: name, registered: true });
+
+        emit MidasLinearPoolProtocolIdRegistered(protocolId, name);
     }
 }

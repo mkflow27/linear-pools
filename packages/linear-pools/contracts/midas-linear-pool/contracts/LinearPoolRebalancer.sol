@@ -104,7 +104,7 @@ abstract contract LinearPoolRebalancer {
 
         // trigger any implementation specific state changes needed prior to performing the rebalance.
         _beforeRebalance();
-        
+
         if (mainTokenBalance < desiredMainTokenBalance) {
             return _rebalanceLackOfMainToken(desiredMainTokenBalance - mainTokenBalance, recipient);
         } else if (mainTokenBalance > desiredMainTokenBalance) {
