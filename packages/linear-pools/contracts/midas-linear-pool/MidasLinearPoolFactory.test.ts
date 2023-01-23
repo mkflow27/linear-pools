@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import { BigNumber, Contract } from 'ethers';
 import { SignerWithAddress } from '@nomiclabs/hardhat-ethers/signers';
 
-import { fp, FP_ZERO } from '@orbcollective/shared-dependencies/numbers';
+import { fp } from '@orbcollective/shared-dependencies/numbers';
 import {
   deployPackageContract,
   getPackageContractDeployedAt,
