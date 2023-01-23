@@ -20,7 +20,6 @@ import * as expectEvent from '@orbcollective/shared-dependencies/expectEvent';
 import TokenList from '@orbcollective/shared-dependencies/test-helpers/token/TokenList';
 
 import { FundManagement, SingleSwap } from '@balancer-labs/balancer-js';
-import { initial } from 'lodash';
 
 export enum SwapKind {
   GivenIn = 0,
@@ -86,10 +85,6 @@ describe('MidasLinearPool', function () {
       args: ['cDAI,', 'cDAI', 18, mainToken.address, fp(1.05)],
     });
 
-    // returns a Contract type.
-    // internally loads a contracts artifact (abi and bytecode of a TestToken contract)
-    // afterwards the hardhat-ethers plugin is used to
-    // ethers.getContractAt() to allow interaction with the contract
     wrappedToken = await getPackageContractDeployedAt('TestToken', wrappedTokenInstance.address);
 
     tokens = new TokenList([mainToken, wrappedToken]).sort();
@@ -240,39 +235,15 @@ describe('MidasLinearPool', function () {
   // Midas custom tests
   describe('usdc vault with 6 decimals tests', () => {
     let deployer: SignerWithAddress;
-
-    // this describe statement has a pool deployment before each it
-    // mimic it to achieve same test behavour as with balacer labs
-
-    // Token type not part of this repo
-    // let usdc: Token;
     let usdc: Contract;
-    // let cUSDC: Token;
     let cusdc: Contract;
-
-    let usdcCtoken: Contract;
-    // LinearPool type not part of this repo. Make it a Contract type
-    // let bbcUSDC: LinearPool;
     let bbcusdc: Contract;
 
     let initialExchangeRate: BigNumber;
     let usdcRequired: BigNumber;
 
     beforeEach('setup tokens, cToken and linear pool', async () => {
-      // deploy tokens before each it statement
-      // due to decimals being relevant for the first describe statement
-
-      // deploy Token returns a contract instance which is interactable
-      // via ethers.ContractFactory
-      // it already has a proper ERC20Token factory included and
-      // this no specification is needed
-
-      // seperate token as it now has 6 decimals
       usdc = await deployToken('USDC', 6, deployer);
-
-      // deployPackageContract returns a contract instance which is
-      // interactable. It does this by loading the artifact, creating the
-      // ethers ContractFactory and deploying the instance from that factory
       cusdc = await deployPackageContract('MockCToken', {
         args: ['cUSDC', 'cUSDC', 6, usdc.address, fp(1)],
       });
@@ -295,8 +266,6 @@ describe('MidasLinearPool', function () {
       const initialJoinAmount = bn(100000000000);
       await usdc.mint(lp.address, initialJoinAmount);
 
-      // make sure lp is attached to usdc.
-      // let's test
       await usdc.connect(lp).approve(vault.address, initialJoinAmount);
 
       const joinData: SingleSwap = {

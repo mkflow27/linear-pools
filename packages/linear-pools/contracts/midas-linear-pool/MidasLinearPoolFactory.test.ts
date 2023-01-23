@@ -49,42 +49,6 @@ describe('MidasLinearPoolFactory', function () {
 
   const MIDAS_PROTOCOL_NAME = 'MIDAS';
 
-  /* before('setup signers', async () => {
-    [, owner] = await ethers.getSigners();
-  });
-
-  sharedBeforeEach('deploy factory & tokens', async () => {
-    vault = await Vault.create();
-    const queries = await deploy('v2-standalone-utils/BalancerQueries', { args: [vault.address] });
-    factory = await deploy('MidasLinearPoolFactory', {
-      args: [vault.address, vault.getFeesProvider().address, queries.address, '1.0', '1.0'],
-    });
-    creationTime = await currentTimestamp();
-
-    const mainToken = await Token.create('DAI');
-    const wrappedTokenInstance = await deploy('MockCToken', {
-      args: ['cDAI', 'cDAI', 18, mainToken.address, fp(1.05)],
-    });
-    const wrappedToken = await Token.deployedAt(wrappedTokenInstance.address);
-
-    tokens = new TokenList([mainToken, wrappedToken]).sort();
-  });
-
-  async function createPool(): Promise<Contract> {
-    const receipt = await factory.create(
-      NAME,
-      SYMBOL,
-      tokens.DAI.address,
-      tokens.CDAI.address,
-      UPPER_TARGET,
-      POOL_SWAP_FEE_PERCENTAGE,
-      owner.address
-    );
-
-    const event = expectEvent.inReceipt(await receipt.wait(), 'PoolCreated');
-    return deployedAt('LinearPool', event.args.pool);
-  } */
-
   beforeEach('deploy factory & tokens', async () => {
     let deployer: SignerWithAddress;
 
