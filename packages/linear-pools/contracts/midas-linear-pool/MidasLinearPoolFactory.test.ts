@@ -128,7 +128,7 @@ describe('MidasLinearPoolFactory', function () {
         factoryVersion,
         poolVersion,
         BASE_PAUSE_WINDOW_DURATION,
-        BASE_BUFFER_PERIOD_DURATION
+        BASE_BUFFER_PERIOD_DURATION,
       ],
     });
 
