@@ -20,12 +20,14 @@ const WETH = new Task('00000000-tokens', TaskMode.READ_ONLY);
 const BaseVersion = { version: 1, deployment: '20221130-midas-linear-pool' };
 
 export default {
-  Vault,
-  BalancerQueries,
-  ProtocolFeePercentagesProvider,
-  WETH,
-  FactoryVersion: JSON.stringify({ name: 'MidasLinearPoolFactory', ...BaseVersion }),
-  PoolVersion: JSON.stringify({ name: 'MidasLinearPool', ...BaseVersion }),
-  InitialPauseWindowDuration: MONTH * 3,
-  BufferPeriodDuration: MONTH,
+  goerli: {
+    Vault,
+    BalancerQueries,
+    ProtocolFeePercentagesProvider,
+    WETH,
+    FactoryVersion: JSON.stringify({ name: 'MidasLinearPoolFactory', ...BaseVersion }),
+    PoolVersion: JSON.stringify({ name: 'MidasLinearPool', ...BaseVersion }),
+    InitialPauseWindowDuration: MONTH * 3,
+    BufferPeriodDuration: MONTH,
+  },
 };

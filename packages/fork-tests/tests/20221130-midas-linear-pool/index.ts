@@ -21,15 +21,14 @@ export default async (task: Task, { force, from }: TaskRunOptions = {}): Promise
 
   const factory = await task.deployAndVerify('MidasLinearPoolFactory', args, from, force);
 
-  /* if (task.mode === TaskMode.LIVE) {
+  if (task.mode === TaskMode.LIVE) {
     // We also create a Pool using the factory and verify it, to let us compute their action IDs and so that future
     // Pools are automatically verified. We however don't run any of this code in CHECK mode, since we don't care about
     // the contracts deployed here. The action IDs will be checked to be correct via a different mechanism.
 
-    // MidasLinearPools require a StaticAToken, which in turn requires a LendingPool.
-    const mockLendingPool = await task.deployAndVerify('MockAaveLendingPool', [], from, force);
-    const mockStaticATokenArgs = ['DO NOT USE - Mock Static AToken', 'TEST', 18, input.WETH, mockLendingPool.address];
-    const mockStaticAToken = await task.deployAndVerify('MockStaticAToken', mockStaticATokenArgs, from, force);
+    // MidasLinearPools require a Compound Token - See rari docs.
+    const mockCTokenArgs = ['DO NOT USE - Mock CToken', 'TEST', 18, input.WETH, bn(1e18)];
+    const mockCToken = await task.deployAndVerify('MockCToken', mockCTokenArgs, from, force);
 
     // The assetManager, pauseWindowDuration and bufferPeriodDuration will be filled in later, but we need to declare
     // them here to appease the type system. Those are constructor arguments, but automatically provided by the factory.
@@ -38,7 +37,7 @@ export default async (task: Task, { force, from }: TaskRunOptions = {}): Promise
       name: 'DO NOT USE - Mock Linear Pool',
       symbol: 'TEST',
       mainToken: input.WETH,
-      wrappedToken: mockStaticAToken.address,
+      wrappedToken: mockCToken.address,
       assetManager: undefined,
       upperTarget: 0,
       pauseWindowDuration: undefined,
@@ -50,6 +49,8 @@ export default async (task: Task, { force, from }: TaskRunOptions = {}): Promise
 
     // This mimics the logic inside task.deploy
     if (force || !task.output({ ensure: false })['MockMidasLinearPool']) {
+      const PROTOCOL_ID = 0;
+
       const poolCreationReceipt = await (
         await factory.create(
           mockPoolArgs.name,
@@ -58,7 +59,8 @@ export default async (task: Task, { force, from }: TaskRunOptions = {}): Promise
           mockPoolArgs.wrappedToken,
           mockPoolArgs.upperTarget,
           mockPoolArgs.swapFeePercentage,
-          mockPoolArgs.owner
+          mockPoolArgs.owner,
+          PROTOCOL_ID
         )
       ).wait();
       const event = expectEvent.inReceipt(poolCreationReceipt, 'PoolCreated');
@@ -97,5 +99,5 @@ export default async (task: Task, { force, from }: TaskRunOptions = {}): Promise
 
     // We can also verify the Asset Manager
     await task.verify('MidasLinearPoolRebalancer', assetManagerAddress, [input.Vault, input.BalancerQueries]);
-  } */
+  }
 };
