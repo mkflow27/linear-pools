@@ -27,6 +27,7 @@ contract MockBaseSilo is IBaseSilo, MockMaliciousQueryReverter {
     // asset address for which Silo was created
     address private immutable _siloAsset;
 
+    // TODO: Change to immutable and create implementation
     ISiloRepository private immutable _siloRepository;
 
     /// @dev asset => AssetStorage
@@ -60,7 +61,7 @@ contract MockBaseSilo is IBaseSilo, MockMaliciousQueryReverter {
     }
 
     function setAssetStorage(
-        address interestBearingAsset,
+        address interestBarringAsset,
         IShareToken collateralToken,
         IShareToken collateralOnlyToken,
         IShareToken debtToken,
@@ -77,11 +78,11 @@ contract MockBaseSilo is IBaseSilo, MockMaliciousQueryReverter {
             totalBorrowAmount
         );
 
-        _assetStorage[interestBearingAsset] = storageValue;
+        _assetStorage[interestBarringAsset] = storageValue;
     }
 
     function setInterestData(
-        address interestBearingAsset,
+        address interestBarringAsset,
         uint256 harvestedProtocolFees,
         uint256 protocolFees,
         uint64 interestRateTimestamp,
@@ -94,6 +95,6 @@ contract MockBaseSilo is IBaseSilo, MockMaliciousQueryReverter {
             status
         );
 
-        _interestData[interestBearingAsset] = interestValue;
+        _interestData[interestBarringAsset] = interestValue;
     }
 }

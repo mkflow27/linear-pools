@@ -78,8 +78,6 @@ interface IBaseSilo {
 interface ISilo is IBaseSilo {
     /**
      * @dev Deposits funds into the Silo
-     * @param _asset The address of the token to withdraw
-     * @param _amount The amount of the token to withdraw
      * @param _collateralOnly: True means your shareToken is protected (cannot be swapped for interest)
      */
     function deposit(
@@ -90,8 +88,6 @@ interface ISilo is IBaseSilo {
 
     /**
      * @dev Withdraws funds from the Silo
-     * @param _asset The address of the token to withdraw
-     * @param _amount The amount of the token to withdraw
      * @param _collateralOnly: True means your shareToken is protected (cannot be swapped for interest)
      */
     function withdraw(

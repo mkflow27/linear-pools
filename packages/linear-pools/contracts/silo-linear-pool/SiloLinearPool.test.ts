@@ -103,7 +103,7 @@ describe('SiloLinearPool', function () {
     await wrappedTokenInstance.setTotalSupply(fp(10000));
     // initalize the asset storage mapping within the Silo for the main token
     await mockSilo.setAssetStorage(
-      mainToken.address, // interestBearingAsset
+      mainToken.address, // interestBarringAsset
       wrappedToken.address, // CollateralToken
       wrappedToken.address, // CollateralOnlyToken (using wrapped token as a placeholder)
       wrappedToken.address, // debtToken (using wrapped token as a placeholder)
@@ -113,7 +113,7 @@ describe('SiloLinearPool', function () {
     );
 
     await mockSilo.setInterestData(
-      mainToken.address, // interestBearingAsset
+      mainToken.address, // interestBarringAsset
       0, // harvestedProtocolFees
       0, // protocolFees
       0, // interestRateTimestamp
