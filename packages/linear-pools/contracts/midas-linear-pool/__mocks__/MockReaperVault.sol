@@ -18,7 +18,7 @@ import "@orbcollective/shared-dependencies/contracts/TestToken.sol";
 
 //we're unable to implement IReaperTokenVault because it defines the decimals function, which collides with
 //the TestToken ERC20 implementation
-contract MockReaperVault is TestToken {
+contract MockReaperVaultMidas is TestToken {
     address public immutable token;
     uint256 private _pricePerFullShare;
 
